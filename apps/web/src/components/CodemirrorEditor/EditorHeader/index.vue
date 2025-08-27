@@ -165,8 +165,8 @@ async function copy() {
 
 function onNewButtonClick() {
   const content = output.value
-  if (!wechatCredentials.appId || !wechatCredentials.appSecret || !wechatCredentials.toUser) {
-    toast.error(`请先在 wechat-credentials.ts 中配置 appId、appSecret 和 toUser`)
+  if (!wechatCredentials.appId || !wechatCredentials.appSecret) {
+    toast.error(`请先在 wechat-credentials.ts 中配置 appId 和 appSecret`)
     return
   }
 
@@ -181,18 +181,23 @@ function onNewButtonClick() {
     .then((tokenResp) => {
       const accessToken = tokenResp.data.access_token
       return axios.post(
-        `https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${accessToken}`,
+        `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${accessToken}`,
         {
-          touser: wechatCredentials.toUser,
-          msgtype: `text`,
-          text: {
-            content,
-          },
+          articles: [
+            {
+              title: `未命名文章`,
+              author: ``,
+              digest: ``,
+              content,
+              thumb_media_id: ``,
+              show_cover_pic: 0,
+            },
+          ],
         },
       )
     })
     .then(() => {
-      toast.success(`已发送到公众号`)
+      toast.success(`已发送到公众号草稿箱`)
     })
     .catch((error) => {
       console.error(error)
