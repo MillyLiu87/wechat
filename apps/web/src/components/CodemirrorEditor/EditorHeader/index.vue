@@ -160,6 +160,10 @@ async function copy() {
     })
   }, 350)
 }
+
+function onNewButtonClick() {
+  toast.success(`新按钮点击`)
+}
 </script>
 
 <template>
@@ -238,6 +242,9 @@ async function copy() {
       >
         <Button variant="ghost" class="shadow-none" @click="copy">
           复制
+        </Button>
+        <Button variant="ghost" class="shadow-none" @click="onNewButtonClick">
+          新按钮
         </Button>
         <Separator orientation="vertical" class="h-5" />
         <DropdownMenu v-model="copyMode">
