@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import axios from 'axios'
 import {
   ChevronDownIcon,
   Moon,
@@ -7,6 +8,7 @@ import {
   Settings,
   Sun,
 } from 'lucide-vue-next'
+import { wechatCredentials } from '@/config/wechat-credentials'
 import { altSign, ctrlKey, ctrlSign, shiftSign } from '@/configs/shortcut-key'
 import { useStore } from '@/stores'
 import { addPrefix, processClipboardContent } from '@/utils'
@@ -162,7 +164,40 @@ async function copy() {
 }
 
 function onNewButtonClick() {
-  toast.success(`新按钮点击`)
+  const content = output.value
+  if (!wechatCredentials.appId || !wechatCredentials.appSecret || !wechatCredentials.toUser) {
+    toast.error(`请先在 wechat-credentials.ts 中配置 appId、appSecret 和 toUser`)
+    return
+  }
+
+  axios
+    .get(`https://api.weixin.qq.com/cgi-bin/token`, {
+      params: {
+        grant_type: `client_credential`,
+        appid: wechatCredentials.appId,
+        secret: wechatCredentials.appSecret,
+      },
+    })
+    .then((tokenResp) => {
+      const accessToken = tokenResp.data.access_token
+      return axios.post(
+        `https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${accessToken}`,
+        {
+          touser: wechatCredentials.toUser,
+          msgtype: `text`,
+          text: {
+            content,
+          },
+        },
+      )
+    })
+    .then(() => {
+      toast.success(`已发送到公众号`)
+    })
+    .catch((error) => {
+      console.error(error)
+      toast.error(`发送失败`)
+    })
 }
 </script>
 
@@ -244,7 +279,7 @@ function onNewButtonClick() {
           复制
         </Button>
         <Button variant="ghost" class="shadow-none" @click="onNewButtonClick">
-          新按钮
+          发送到公众号
         </Button>
         <Separator orientation="vertical" class="h-5" />
         <DropdownMenu v-model="copyMode">
