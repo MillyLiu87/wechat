@@ -74,6 +74,18 @@ function triggerPickCover() {
   coverInputRef.value?.click()
 }
 
+function deleteCover() {
+  if (coverPreviewUrl.value) {
+    URL.revokeObjectURL(coverPreviewUrl.value)
+  }
+  coverFile.value = null
+  coverPreviewUrl.value = null
+  // Reset the file input
+  if (coverInputRef.value) {
+    coverInputRef.value.value = ''
+  }
+}
+
 function showCoverPreview() {
   if (coverPreviewUrl.value) {
     showCoverPreviewModal.value = true
@@ -340,7 +352,7 @@ function showArticleConfigDialog() {
     articleConfig.value.title = `文章标题 - ${new Date().toLocaleString()}`
   }
   if (!articleConfig.value.author) {
-    articleConfig.value.author = `作者名称`
+    articleConfig.value.author = `小飞侠说AI`
   }
   if (!articleConfig.value.digest) {
     articleConfig.value.digest = `文章摘要 - 这是一篇通过编辑器发送的文章`
@@ -358,61 +370,28 @@ async function confirmSendWithConfig() {
   await actualSendToWeChat()
 }
 
-// ===== 预览即将发送的内容 =====
+// ===== 预览即将发送的内容（包含封面上传） =====
+const showPreviewDialog = ref(false)
+const previewContent = ref('')
+
 async function previewSendContent() {
-  const content = await getPreviewContent()
-  console.log('📝 即将发送的内容:', content)
-  
-  // 创建一个模态框显示内容预览
-  const modal = document.createElement('div')
-  modal.style.cssText = `
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
-    background: rgba(0,0,0,0.5); z-index: 9999; display: flex; 
-    align-items: center; justify-content: center;
-  `
-  
-  const content_preview = document.createElement('div')
-  content_preview.style.cssText = `
-    background: white; max-width: 90%; max-height: 90%; 
-    padding: 20px; border-radius: 8px; overflow: auto; display: flex; flex-direction: column;
-  `
-  
-  // 构建封面图预览HTML
-  const coverImageHtml = coverPreviewUrl.value ? `
-    <div style="margin-bottom: 15px;">
-      <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">封面图预览：</h4>
-      <img src="${coverPreviewUrl.value}" alt="封面图" style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;" />
-    </div>
-  ` : '<div style="margin-bottom: 15px; padding: 20px; border: 2px dashed #ccc; border-radius: 4px; text-align: center; color: #999;">未选择封面图</div>'
-  
-  content_preview.innerHTML = `
-    <h3 style="margin: 0 0 20px 0;">即将发送到微信公众号的内容预览：</h3>
-    
-    <div style="display: flex; gap: 20px; flex: 1; min-height: 0;">
-      <!-- 左侧封面图预览 -->
-      <div style="flex: 0 0 320px;">
-        ${coverImageHtml}
-      </div>
-      
-      <!-- 右侧文章内容预览 -->
-      <div style="flex: 1; min-width: 0;">
-        <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">文章内容预览：</h4>
-        <div style="border: 1px solid #ccc; padding: 15px; border-radius: 4px; max-height: 500px; overflow: auto; background: #fafafa;">
-          ${content}
-        </div>
-      </div>
-    </div>
-    
-    <div style="text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
-      <button onclick="this.closest('div[style*=fixed]').remove()" 
-              style="margin-right: 10px; padding: 8px 16px; background: #ccc; border: none; border-radius: 4px; cursor: pointer;">取消</button>
-      <button onclick="this.closest('div[style*=fixed]').remove(); window.proceedToSend()" 
-              style="padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer;">确认发送</button>
-    </div>
-  `
-  
-  modal.appendChild(content_preview)
-  document.body.appendChild(modal)
+  try {
+    previewContent.value = await getPreviewContent()
+    console.log('📝 即将发送的内容:', previewContent.value)
+    showPreviewDialog.value = true
+  } catch (error) {
+    console.error('❌ 获取预览内容失败:', error)
+    toast.error('获取预览内容失败')
+  }
+}
+
+function closePreviewDialog() {
+  showPreviewDialog.value = false
+}
+
+async function confirmSendFromPreview() {
+  showPreviewDialog.value = false
+  showArticleConfigDialog()
 }
 
 // ===== 发送到公众号（创建草稿）=====
@@ -428,25 +407,20 @@ async function onNewButtonClick() {
     return
   }
 
-  // 验证封面图
-  if (!coverFile.value) {
-    toast.warning(`请先选择封面图`)
-    triggerPickCover()
-    return
-  }
-
-  // 预览内容
+  // 直接进入预览流程，封面图会在预览对话框中处理
   await previewSendContent()
-  
-  // 设置全局函数用于确认发送
-  ;(window as any).proceedToSend = async () => {
-    showArticleConfigDialog()
-  }
 }
 
 async function actualSendToWeChat() {
   try {
     isUploading.value = true
+    
+    // 验证封面图（在实际发送时检查）
+    if (!coverFile.value) {
+      toast.error('请先选择封面图')
+      isUploading.value = false
+      return
+    }
     
     // 获取预览面板的内容（现在不会破坏预览面板）
     const previewContent = await getPreviewContent()
@@ -494,7 +468,7 @@ async function actualSendToWeChat() {
           content: previewContent, // 使用预览面板的实际渲染内容
           content_source_url: articleConfig.value.contentSourceUrl || '', // 原文链接，可选
           thumb_media_id: thumbMediaId, // 封面图的永久素材ID
-          show_cover_pic: articleConfig.value.showCoverPic ? 1 : 0, // 是否显示封面，0-不显示，1-显示
+          show_cover_pic: 1, // 是否显示封面，1-显示（封面图已上传）
           need_open_comment: articleConfig.value.needOpenComment ? 1 : 0, // 是否打开评论，0-不打开，1-打开
           only_fans_can_comment: articleConfig.value.onlyFansCanComment ? 1 : 0, // 是否粉丝才可评论，0-所有人可评论，1-粉丝才可评论
         },
@@ -632,29 +606,11 @@ async function actualSendToWeChat() {
           复制
         </Button>
 
-        <!-- 挑选封面图 -->
-        <input
-          ref="coverInputRef"
-          type="file"
-          accept="image/jpeg,image/png,image/gif"
-          class="hidden"
-          @change="onCoverChange"
-        />
-        <Button 
-          variant="ghost" 
-          class="shadow-none" 
-          @click="triggerPickCover"
-          :disabled="isUploading"
-        >
-          {{ coverFile ? '✓ 已选择封面' : '选择封面图' }}
-        </Button>
-
-
         <Button 
           variant="ghost" 
           class="shadow-none" 
           @click="onNewButtonClick"
-          :disabled="isUploading || !coverFile"
+          :disabled="isUploading"
         >
           {{ isUploading ? '发送中...' : '发送到公众号' }}
         </Button>
@@ -756,17 +712,6 @@ async function actualSendToWeChat() {
         <div class="space-y-2">
           <div class="flex items-center">
             <input 
-              v-model="articleConfig.showCoverPic"
-              type="checkbox" 
-              id="showCoverPic"
-              class="mr-2"
-              @click.stop
-            />
-            <label for="showCoverPic" class="text-sm text-gray-700 dark:text-gray-300">显示封面图</label>
-          </div>
-
-          <div class="flex items-center">
-            <input 
               v-model="articleConfig.needOpenComment"
               type="checkbox" 
               id="needOpenComment"
@@ -797,6 +742,101 @@ async function actualSendToWeChat() {
         <Button @click="confirmSendWithConfig" :disabled="!articleConfig.title.trim()">
           确认发送
         </Button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 内容预览对话框（包含封面上传） -->
+  <div 
+    v-if="showPreviewDialog" 
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    @click="closePreviewDialog"
+  >
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-6xl mx-4 max-h-[90vh] overflow-y-auto" @click.stop>
+      <h3 class="text-xl font-semibold mb-6 text-gray-900 dark:text-white">即将发送到微信公众号的内容预览</h3>
+      
+      <div class="flex gap-6 min-h-0">
+        <!-- 左侧封面图区域 -->
+        <div class="flex-0 w-80">
+          <h4 class="text-sm font-medium mb-3 text-gray-700 dark:text-gray-300">封面图设置</h4>
+          
+          <!-- 封面图上传 -->
+          <div class="mb-4">
+            <input
+              ref="coverInputRef"
+              type="file"
+              accept="image/jpeg,image/png,image/gif"
+              class="hidden"
+              @change="onCoverChange"
+            />
+            
+            <div 
+              v-if="!coverPreviewUrl"
+              class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-blue-400"
+              @click="triggerPickCover"
+            >
+              <div class="text-gray-500 dark:text-gray-400">
+                <svg class="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+                <p class="text-sm">点击上传封面图</p>
+                <p class="text-xs text-gray-400 mt-1">支持 JPG、PNG、GIF 格式</p>
+              </div>
+            </div>
+            
+            <div v-else class="relative">
+              <img 
+                :src="coverPreviewUrl" 
+                alt="封面预览" 
+                class="w-full max-h-48 object-cover rounded-lg border"
+              />
+              <div class="absolute top-2 right-2 flex gap-2">
+                <button
+                  @click="triggerPickCover"
+                  class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
+                >
+                  重新选择
+                </button>
+                <button
+                  @click="deleteCover"
+                  class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 封面图信息 -->
+          <div v-if="coverFile" class="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 p-3 rounded">
+            <p><strong>文件名:</strong> {{ coverFile.name }}</p>
+            <p><strong>大小:</strong> {{ (coverFile.size / 1024).toFixed(1) }} KB</p>
+            <p><strong>类型:</strong> {{ coverFile.type }}</p>
+          </div>
+        </div>
+        
+        <!-- 右侧文章内容预览 -->
+        <div class="flex-1 min-w-0">
+          <h4 class="text-sm font-medium mb-3 text-gray-700 dark:text-gray-300">文章内容预览</h4>
+          <div class="border border-gray-300 dark:border-gray-600 rounded-lg p-4 max-h-96 overflow-y-auto bg-gray-50 dark:bg-gray-700">
+            <div v-html="previewContent" class="prose prose-sm max-w-none"></div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="flex justify-between items-center mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+        <div class="text-sm text-gray-500">
+          <span v-if="!coverFile" class="text-yellow-600">⚠️ 建议上传封面图以获得更好的展示效果</span>
+          <span v-else class="text-green-600">✅ 封面图已准备就绪</span>
+        </div>
+        <div class="flex gap-3">
+          <Button variant="outline" @click="closePreviewDialog">
+            取消
+          </Button>
+          <Button @click="confirmSendFromPreview">
+            下一步：配置文章信息
+          </Button>
+        </div>
       </div>
     </div>
   </div>
