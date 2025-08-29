@@ -35,57 +35,73 @@ const {
   formatContent,
 } = store
 
+// ===== 封面图选择 =====
+const coverFile = ref<File | null>(null)
+const coverInputRef = ref<HTMLInputElement | null>(null)
+const coverPreviewUrl = ref<string | null>(null)
+const isUploading = ref(false)
+
+// ===== 文章配置 =====
+const showConfigDialog = ref(false)
+const articleConfig = ref({
+  title: '',
+  author: '',
+  digest: '',
+  contentSourceUrl: '',
+  showCoverPic: true,
+  needOpenComment: false,
+  onlyFansCanComment: false
+})
+
+function onCoverChange(e: Event) {
+  const files = (e.target as HTMLInputElement).files
+  coverFile.value = files && files[0] ? files[0] : null
+  
+  // 清理之前的预览URL
+  if (coverPreviewUrl.value) {
+    URL.revokeObjectURL(coverPreviewUrl.value)
+    coverPreviewUrl.value = null
+  }
+  
+  if (coverFile.value) {
+    console.log('✅ 已选择封面：', coverFile.value.name)
+    // 创建预览URL
+    coverPreviewUrl.value = URL.createObjectURL(coverFile.value)
+  }
+}
+
+function triggerPickCover() {
+  coverInputRef.value?.click()
+}
+
+function showCoverPreview() {
+  if (coverPreviewUrl.value) {
+    showCoverPreviewModal.value = true
+  }
+}
+
+function closeCoverPreview() {
+  showCoverPreviewModal.value = false
+}
+
+// Add a separate variable for preview modal visibility
+const showCoverPreviewModal = ref(false)
+
 // 工具函数，添加格式
 function addFormat(cmd: string) {
-  (editor.value as any).options.extraKeys[cmd](editor.value)
+  ;(editor.value as any).options.extraKeys[cmd](editor.value)
 }
 
 const formatItems = [
-  {
-    label: `加粗`,
-    kbd: [ctrlSign, `B`],
-    cmd: `${ctrlKey}-B`,
-  },
-  {
-    label: `斜体`,
-    kbd: [ctrlSign, `I`],
-    cmd: `${ctrlKey}-I`,
-  },
-  {
-    label: `删除线`,
-    kbd: [ctrlSign, `D`],
-    cmd: `${ctrlKey}-D`,
-  },
-  {
-    label: `超链接`,
-    kbd: [ctrlSign, `K`],
-    cmd: `${ctrlKey}-K`,
-  },
-  {
-    label: `行内代码`,
-    kbd: [ctrlSign, `E`],
-    cmd: `${ctrlKey}-E`,
-  },
-  {
-    label: `标题`,
-    kbd: [ctrlSign, `H`],
-    cmd: `${ctrlKey}-H`,
-  },
-  {
-    label: `无序列表`,
-    kbd: [ctrlSign, `U`],
-    cmd: `${ctrlKey}-U`,
-  },
-  {
-    label: `有序列表`,
-    kbd: [ctrlSign, `O`],
-    cmd: `${ctrlKey}-O`,
-  },
-  {
-    label: `格式化`,
-    kbd: [altSign, shiftSign, `F`],
-    cmd: `formatContent`,
-  },
+  { label: `加粗`, kbd: [ctrlSign, `B`], cmd: `${ctrlKey}-B` },
+  { label: `斜体`, kbd: [ctrlSign, `I`], cmd: `${ctrlKey}-I` },
+  { label: `删除线`, kbd: [ctrlSign, `D`], cmd: `${ctrlKey}-D` },
+  { label: `超链接`, kbd: [ctrlSign, `K`], cmd: `${ctrlKey}-K` },
+  { label: `行内代码`, kbd: [ctrlSign, `E`], cmd: `${ctrlKey}-E` },
+  { label: `标题`, kbd: [ctrlSign, `H`], cmd: `${ctrlKey}-H` },
+  { label: `无序列表`, kbd: [ctrlSign, `U`], cmd: `${ctrlKey}-U` },
+  { label: `有序列表`, kbd: [ctrlSign, `O`], cmd: `${ctrlKey}-O` },
+  { label: `格式化`, kbd: [altSign, shiftSign, `F`], cmd: `formatContent` },
 ] as const
 
 const copyMode = useStorage(addPrefix(`copyMode`), `txt`)
@@ -152,9 +168,7 @@ async function copy() {
       )
       window.dispatchEvent(
         new CustomEvent(`copyToMp`, {
-          detail: {
-            content: output.value,
-          },
+          detail: { content: output.value },
         }),
       )
       editorRefresh()
@@ -163,46 +177,382 @@ async function copy() {
   }, 350)
 }
 
-function onNewButtonClick() {
-  const content = output.value
+// ===== 上传永久素材（封面）助手 =====
+async function uploadPermanentImage(accessToken: string, file: File): Promise<string> {
+  const form = new FormData()
+  form.append('media', file)
+  form.append('type', 'image')
+
+  try {
+    const response = await axios.post(
+      `/cgi-bin/material/add_material?access_token=${accessToken}&type=image`,
+      form,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000, // 30秒超时
+      }
+    )
+
+    console.log('📸 上传封面响应:', response.data)
+
+    if (response.data?.errcode && response.data.errcode !== 0) {
+      throw new Error(`上传封面失败: ${response.data.errcode} - ${response.data.errmsg}`)
+    }
+
+    if (!response.data?.media_id) {
+      throw new Error(`上传封面失败: 未返回 media_id`)
+    }
+
+    return response.data.media_id
+  } catch (error: any) {
+    console.error('❌ 上传封面失败:', error)
+    if (error.response?.data) {
+      throw new Error(`上传封面失败: ${error.response.data.errmsg || error.response.data.errcode || '未知错误'}`)
+    }
+    throw new Error(`上传封面失败: ${error.message}`)
+  }
+}
+
+// ===== 获取预览面板内容的函数 =====
+async function getPreviewContent(): Promise<string> {
+  try {
+    console.log('📄 开始获取预览内容（不破坏预览面板）')
+    
+    // 关键改进：不直接操作预览面板，而是克隆一份来处理
+    const originalPreviewPanel = document.getElementById('output')
+    if (!originalPreviewPanel) {
+      console.error('❌ 找不到预览面板')
+      return `<p>获取内容失败 - ${new Date().toLocaleString()}</p>`
+    }
+
+    // 1. 首先保存所有Mermaid SVG的原始样式
+    const originalSvgs = originalPreviewPanel.querySelectorAll('svg')
+    const svgStyles: string[] = []
+    originalSvgs.forEach((svg, index) => {
+      // 保存每个SVG的完整HTML（包括样式）
+      svgStyles[index] = svg.outerHTML
+    })
+
+    // 2. 克隆预览面板DOM（深度克隆，包括所有子元素）
+    const clonedPanel = originalPreviewPanel.cloneNode(true) as HTMLElement
+    clonedPanel.id = 'temp-output-for-processing'
+    
+    // 3. 将克隆的面板临时添加到页面（但隐藏）
+    clonedPanel.style.cssText = 'position: absolute; left: -9999px; top: -9999px; visibility: hidden;'
+    document.body.appendChild(clonedPanel)
+    
+    try {
+      // 4. 保存当前模式状态
+      const isBeforeDark = isDark.value
+      
+      // 5. 如果是深色模式，先切换到白天模式（和复制逻辑一致）
+      if (isBeforeDark) {
+        toggleDark()
+        await nextTick()
+      }
+      
+      // 6. 临时替换原预览面板为克隆面板来处理样式
+      const originalId = originalPreviewPanel.id
+      originalPreviewPanel.id = 'temp-original'
+      clonedPanel.id = 'output' // processClipboardContent需要这个id
+      
+      // 7. 处理剪贴板内容（在克隆面板上操作）
+      processClipboardContent(primaryColor.value)
+      
+      // 8. 恢复Mermaid SVG的原始样式（关键修复）
+      const processedSvgs = clonedPanel.querySelectorAll('svg')
+      processedSvgs.forEach((svg, index) => {
+        if (svgStyles[index]) {
+          // 用原始样式替换处理后的SVG
+          svg.outerHTML = svgStyles[index]
+        }
+      })
+      
+      // 9. 获取处理后的内容
+      let styledContent = clonedPanel.innerHTML
+      
+      // 10. 恢复原预览面板的id
+      originalPreviewPanel.id = originalId
+      clonedPanel.id = 'temp-output-for-processing'
+      
+      // 11. 特别保留代码块样式 - 确保代码块背景色不丢失
+      styledContent = styledContent
+        .replace(/<script[^>]*>.*?<\/script>/gi, '') // 移除脚本
+        .replace(/contenteditable="[^"]*"/gi, '') // 移除contenteditable属性
+      
+      // 12. 确保代码块有正确的样式（如果丢失了就手动添加）
+      styledContent = styledContent.replace(
+        /<code([^>]*)>/gi, 
+        (match, attributes) => {
+          // 如果code标签没有background-color样式，添加默认的黑色背景
+          if (!attributes.includes('background-color') && !attributes.includes('background:')) {
+            const style = attributes.includes('style=') 
+              ? attributes.replace(/style="([^"]*)"/, 'style="$1; background-color: #1e1e1e; color: #d4d4d4; padding: 2px 4px; border-radius: 3px;"')
+              : attributes + ' style="background-color: #1e1e1e; color: #d4d4d4; padding: 2px 4px; border-radius: 3px;"'
+            return `<code${style}>`
+          }
+          return match
+        }
+      )
+      
+      // 13. 同样处理pre代码块
+      styledContent = styledContent.replace(
+        /<pre([^>]*)>/gi,
+        (match, attributes) => {
+          if (!attributes.includes('background-color') && !attributes.includes('background:')) {
+            const style = attributes.includes('style=') 
+              ? attributes.replace(/style="([^"]*)"/, 'style="$1; background-color: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto;"')
+              : attributes + ' style="background-color: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto;"'
+            return `<pre${style}>`
+          }
+          return match
+        }
+      )
+      
+      // 14. 恢复深色模式（如果之前是深色）
+      if (isBeforeDark) {
+        await nextTick()
+        toggleDark()
+      }
+      
+      console.log('📄 获取到带样式的内容，长度:', styledContent.length)
+      console.log('📄 内容预览（前200字符）:', styledContent.substring(0, 200))
+      
+      return styledContent
+      
+    } finally {
+      // 15. 清理：移除临时克隆的面板
+      document.body.removeChild(clonedPanel)
+    }
+    
+  } catch (error) {
+    console.error('❌ 获取预览内容失败:', error)
+    return `<p>获取内容失败，使用默认内容 - ${new Date().toLocaleString()}</p>`
+  }
+}
+
+// ===== 配置对话框 =====
+function showArticleConfigDialog() {
+  // 设置默认值
+  if (!articleConfig.value.title) {
+    articleConfig.value.title = `文章标题 - ${new Date().toLocaleString()}`
+  }
+  if (!articleConfig.value.author) {
+    articleConfig.value.author = `作者名称`
+  }
+  if (!articleConfig.value.digest) {
+    articleConfig.value.digest = `文章摘要 - 这是一篇通过编辑器发送的文章`
+  }
+  
+  showConfigDialog.value = true
+}
+
+function closeConfigDialog() {
+  showConfigDialog.value = false
+}
+
+async function confirmSendWithConfig() {
+  showConfigDialog.value = false
+  await actualSendToWeChat()
+}
+
+// ===== 预览即将发送的内容 =====
+async function previewSendContent() {
+  const content = await getPreviewContent()
+  console.log('📝 即将发送的内容:', content)
+  
+  // 创建一个模态框显示内容预览
+  const modal = document.createElement('div')
+  modal.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+    background: rgba(0,0,0,0.5); z-index: 9999; display: flex; 
+    align-items: center; justify-content: center;
+  `
+  
+  const content_preview = document.createElement('div')
+  content_preview.style.cssText = `
+    background: white; max-width: 90%; max-height: 90%; 
+    padding: 20px; border-radius: 8px; overflow: auto; display: flex; flex-direction: column;
+  `
+  
+  // 构建封面图预览HTML
+  const coverImageHtml = coverPreviewUrl.value ? `
+    <div style="margin-bottom: 15px;">
+      <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">封面图预览：</h4>
+      <img src="${coverPreviewUrl.value}" alt="封面图" style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;" />
+    </div>
+  ` : '<div style="margin-bottom: 15px; padding: 20px; border: 2px dashed #ccc; border-radius: 4px; text-align: center; color: #999;">未选择封面图</div>'
+  
+  content_preview.innerHTML = `
+    <h3 style="margin: 0 0 20px 0;">即将发送到微信公众号的内容预览：</h3>
+    
+    <div style="display: flex; gap: 20px; flex: 1; min-height: 0;">
+      <!-- 左侧封面图预览 -->
+      <div style="flex: 0 0 320px;">
+        ${coverImageHtml}
+      </div>
+      
+      <!-- 右侧文章内容预览 -->
+      <div style="flex: 1; min-width: 0;">
+        <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">文章内容预览：</h4>
+        <div style="border: 1px solid #ccc; padding: 15px; border-radius: 4px; max-height: 500px; overflow: auto; background: #fafafa;">
+          ${content}
+        </div>
+      </div>
+    </div>
+    
+    <div style="text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+      <button onclick="this.closest('div[style*=fixed]').remove()" 
+              style="margin-right: 10px; padding: 8px 16px; background: #ccc; border: none; border-radius: 4px; cursor: pointer;">取消</button>
+      <button onclick="this.closest('div[style*=fixed]').remove(); window.proceedToSend()" 
+              style="padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer;">确认发送</button>
+    </div>
+  `
+  
+  modal.appendChild(content_preview)
+  document.body.appendChild(modal)
+}
+
+// ===== 发送到公众号（创建草稿）=====
+async function onNewButtonClick() {
+  if (isUploading.value) {
+    toast.warning('正在上传中，请稍候...')
+    return
+  }
+
+  // 验证配置
   if (!wechatCredentials.appId || !wechatCredentials.appSecret) {
     toast.error(`请先在 wechat-credentials.ts 中配置 appId 和 appSecret`)
     return
   }
 
-  axios
-    .get(`https://api.weixin.qq.com/cgi-bin/token`, {
+  // 验证封面图
+  if (!coverFile.value) {
+    toast.warning(`请先选择封面图`)
+    triggerPickCover()
+    return
+  }
+
+  // 预览内容
+  await previewSendContent()
+  
+  // 设置全局函数用于确认发送
+  ;(window as any).proceedToSend = async () => {
+    showArticleConfigDialog()
+  }
+}
+
+async function actualSendToWeChat() {
+  try {
+    isUploading.value = true
+    
+    // 获取预览面板的内容（现在不会破坏预览面板）
+    const previewContent = await getPreviewContent()
+    console.log('📝 准备发送的内容长度:', previewContent.length)
+    console.log('📝 内容预览（前500字符）:', previewContent.substring(0, 500))
+
+    toast.info('正在获取访问令牌...')
+
+    // 1) 获取 access_token - 使用本地代理避免CORS问题
+    const tokenResp = await axios.get(`/cgi-bin/token`, {
       params: {
         grant_type: `client_credential`,
         appid: wechatCredentials.appId,
         secret: wechatCredentials.appSecret,
       },
+      timeout: 10000,
     })
-    .then((tokenResp) => {
-      const accessToken = tokenResp.data.access_token
-      return axios.post(
-        `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${accessToken}`,
+
+    console.log('🔑 Token Response:', tokenResp.data)
+
+    if (tokenResp.data?.errcode && tokenResp.data.errcode !== 0) {
+      throw new Error(`获取访问令牌失败: ${tokenResp.data.errcode} - ${tokenResp.data.errmsg}`)
+    }
+
+    const accessToken = tokenResp.data?.access_token
+    if (!accessToken) {
+      throw new Error(`获取访问令牌失败: 响应中没有 access_token`)
+    }
+
+    toast.info('正在上传封面图...')
+
+    // 2) 上传封面为【永久素材】得到 media_id
+    const thumbMediaId = await uploadPermanentImage(accessToken, coverFile.value)
+    console.log('🖼️ 封面上传成功，media_id:', thumbMediaId)
+
+    toast.info('正在创建草稿...')
+
+    // 3) 调用 draft/add 创建草稿
+    const draftData = {
+      articles: [
         {
-          articles: [
-            {
-              title: `未命名文章`,
-              author: ``,
-              digest: ``,
-              content,
-              thumb_media_id: ``,
-              show_cover_pic: 0,
-            },
-          ],
+          title: articleConfig.value.title,
+          author: articleConfig.value.author,
+          digest: articleConfig.value.digest,
+          content: previewContent, // 使用预览面板的实际渲染内容
+          content_source_url: articleConfig.value.contentSourceUrl || '', // 原文链接，可选
+          thumb_media_id: thumbMediaId, // 封面图的永久素材ID
+          show_cover_pic: articleConfig.value.showCoverPic ? 1 : 0, // 是否显示封面，0-不显示，1-显示
+          need_open_comment: articleConfig.value.needOpenComment ? 1 : 0, // 是否打开评论，0-不打开，1-打开
+          only_fans_can_comment: articleConfig.value.onlyFansCanComment ? 1 : 0, // 是否粉丝才可评论，0-所有人可评论，1-粉丝才可评论
         },
-      )
-    })
-    .then(() => {
-      toast.success(`已发送到公众号草稿箱`)
-    })
-    .catch((error) => {
-      console.error(error)
-      toast.error(`发送失败`)
-    })
+      ],
+    }
+
+    console.log('📝 准备创建草稿，数据:', draftData)
+
+    const draftResp = await axios.post(
+      `/cgi-bin/draft/add?access_token=${accessToken}`,
+      draftData,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    )
+
+    console.log('📝 Draft Response:', draftResp.data)
+
+    // 检查响应
+    if (draftResp.data?.errcode && draftResp.data.errcode !== 0) {
+      throw new Error(`创建草稿失败: ${draftResp.data.errcode} - ${draftResp.data.errmsg}`)
+    }
+
+    if (draftResp.data?.media_id) {
+      toast.success(`🎉 草稿创建成功！\nmedia_id: ${draftResp.data.media_id}\n请前往微信公众号后台查看`)
+    } else {
+      console.warn('⚠️ 响应中没有media_id:', draftResp.data)
+      toast.warning(`草稿可能创建成功，但响应异常。请检查公众号后台。`)
+    }
+
+  } catch (error: any) {
+    console.error('❌ 发送到公众号失败:', error)
+    
+    let errorMessage = '发送失败: 未知错误'
+    
+    if (error.response?.data) {
+      const { errcode, errmsg } = error.response.data
+      errorMessage = `发送失败: ${errcode} - ${errmsg}`
+    } else if (error.message) {
+      errorMessage = `发送失败: ${error.message}`
+    }
+    
+    // 根据错误类型给出特定提示
+    if (error.code === 'NETWORK_ERROR' || error.message.includes('CORS')) {
+      errorMessage += '\n\n提示: 请确保已正确配置代理服务器来解决CORS问题'
+    } else if (error.message.includes('40001')) {
+      errorMessage += '\n\n提示: access_token无效，请检查appId和appSecret配置'
+    } else if (error.message.includes('40007')) {
+      errorMessage += '\n\n提示: 请检查appId配置是否正确'
+    }
+    
+    toast.error(errorMessage)
+  } finally {
+    isUploading.value = false
+  }
 }
 </script>
 
@@ -221,9 +571,7 @@ function onNewButtonClick() {
             <MenubarCheckboxItem
               v-for="{ label, kbd, cmd } in formatItems"
               :key="label"
-              @click="
-                cmd === 'formatContent' ? formatContent() : addFormat(cmd)
-              "
+              @click="cmd === 'formatContent' ? formatContent() : addFormat(cmd)"
             >
               {{ label }}
               <MenubarShortcut>
@@ -283,9 +631,34 @@ function onNewButtonClick() {
         <Button variant="ghost" class="shadow-none" @click="copy">
           复制
         </Button>
-        <Button variant="ghost" class="shadow-none" @click="onNewButtonClick">
-          发送到公众号
+
+        <!-- 挑选封面图 -->
+        <input
+          ref="coverInputRef"
+          type="file"
+          accept="image/jpeg,image/png,image/gif"
+          class="hidden"
+          @change="onCoverChange"
+        />
+        <Button 
+          variant="ghost" 
+          class="shadow-none" 
+          @click="triggerPickCover"
+          :disabled="isUploading"
+        >
+          {{ coverFile ? '✓ 已选择封面' : '选择封面图' }}
         </Button>
+
+
+        <Button 
+          variant="ghost" 
+          class="shadow-none" 
+          @click="onNewButtonClick"
+          :disabled="isUploading || !coverFile"
+        >
+          {{ isUploading ? '发送中...' : '发送到公众号' }}
+        </Button>
+
         <Separator orientation="vertical" class="h-5" />
         <DropdownMenu v-model="copyMode">
           <DropdownMenuTrigger as-child>
@@ -325,6 +698,108 @@ function onNewButtonClick() {
       </Button>
     </div>
   </header>
+
+  <!-- 文章配置对话框 -->
+  <div 
+    v-if="showConfigDialog" 
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    @click="closeConfigDialog"
+  >
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 max-h-[80vh] overflow-y-auto" @click.stop>
+      <h3 class="text-lg font-semibold mb-4 text-gray-900 dark:text-white">配置文章信息</h3>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">文章标题</label>
+          <input 
+            v-model="articleConfig.title"
+            type="text" 
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            placeholder="请输入文章标题"
+            @click.stop
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">作者</label>
+          <input 
+            v-model="articleConfig.author"
+            type="text" 
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            placeholder="请输入作者名称"
+            @click.stop
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">文章摘要</label>
+          <textarea 
+            v-model="articleConfig.digest"
+            rows="3"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            placeholder="请输入文章摘要"
+            @click.stop
+          ></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">原文链接 (可选)</label>
+          <input 
+            v-model="articleConfig.contentSourceUrl"
+            type="url" 
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            placeholder="请输入原文链接"
+            @click.stop
+          />
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center">
+            <input 
+              v-model="articleConfig.showCoverPic"
+              type="checkbox" 
+              id="showCoverPic"
+              class="mr-2"
+              @click.stop
+            />
+            <label for="showCoverPic" class="text-sm text-gray-700 dark:text-gray-300">显示封面图</label>
+          </div>
+
+          <div class="flex items-center">
+            <input 
+              v-model="articleConfig.needOpenComment"
+              type="checkbox" 
+              id="needOpenComment"
+              class="mr-2"
+              @click.stop
+            />
+            <label for="needOpenComment" class="text-sm text-gray-700 dark:text-gray-300">开启评论</label>
+          </div>
+
+          <div class="flex items-center">
+            <input 
+              v-model="articleConfig.onlyFansCanComment"
+              type="checkbox" 
+              id="onlyFansCanComment"
+              class="mr-2"
+              :disabled="!articleConfig.needOpenComment"
+              @click.stop
+            />
+            <label for="onlyFansCanComment" class="text-sm text-gray-700 dark:text-gray-300">仅粉丝可评论</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-3 mt-6">
+        <Button variant="outline" @click="closeConfigDialog">
+          取消
+        </Button>
+        <Button @click="confirmSendWithConfig" :disabled="!articleConfig.title.trim()">
+          确认发送
+        </Button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style lang="less" scoped>

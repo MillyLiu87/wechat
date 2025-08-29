@@ -43,6 +43,16 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, `./src`) },
   },
   css: { devSourcemap: true },
+  server: {
+    proxy: {
+      '/cgi-bin': {
+        target: 'https://api.weixin.qq.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/cgi-bin/, '/cgi-bin'),
+      },
+    },
+  },
   build: {
     rollupOptions: {
       output: {
