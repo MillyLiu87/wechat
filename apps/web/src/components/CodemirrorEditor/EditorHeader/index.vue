@@ -227,103 +227,35 @@ async function uploadPermanentImage(accessToken: string, file: File): Promise<st
   }
 }
 
-// ===== 获取预览面板内容的函数 =====
+// ===== 获取预览面板内容的函数（使用与copy相同的方法） =====
 async function getPreviewContent(): Promise<string> {
   try {
-    console.log('📄 开始获取预览内容（不破坏预览面板）')
+    console.log('📄 开始获取预览内容（使用与copy按钮相同的处理方式）')
     
-    // 关键改进：不直接操作预览面板，而是克隆一份来处理
-    const originalPreviewPanel = document.getElementById('output')
-    if (!originalPreviewPanel) {
+    const clipboardDiv = document.getElementById('output')
+    if (!clipboardDiv) {
       console.error('❌ 找不到预览面板')
       return `<p>获取内容失败 - ${new Date().toLocaleString()}</p>`
     }
 
-    // 1. 首先保存所有Mermaid SVG的原始样式
-    const originalSvgs = originalPreviewPanel.querySelectorAll('svg')
-    const svgStyles: string[] = []
-    originalSvgs.forEach((svg, index) => {
-      // 保存每个SVG的完整HTML（包括样式）
-      svgStyles[index] = svg.outerHTML
-    })
-
-    // 2. 克隆预览面板DOM（深度克隆，包括所有子元素）
-    const clonedPanel = originalPreviewPanel.cloneNode(true) as HTMLElement
-    clonedPanel.id = 'temp-output-for-processing'
-    
-    // 3. 将克隆的面板临时添加到页面（但隐藏）
-    clonedPanel.style.cssText = 'position: absolute; left: -9999px; top: -9999px; visibility: hidden;'
-    document.body.appendChild(clonedPanel)
+    // 保存原始内容和状态
+    const originalContent = clipboardDiv.innerHTML
+    const isBeforeDark = isDark.value
     
     try {
-      // 4. 保存当前模式状态
-      const isBeforeDark = isDark.value
-      
-      // 5. 如果是深色模式，先切换到白天模式（和复制逻辑一致）
+      // 如果是深色模式，先切换到白天模式（和复制逻辑完全一致）
       if (isBeforeDark) {
         toggleDark()
         await nextTick()
       }
       
-      // 6. 临时替换原预览面板为克隆面板来处理样式
-      const originalId = originalPreviewPanel.id
-      originalPreviewPanel.id = 'temp-original'
-      clonedPanel.id = 'output' // processClipboardContent需要这个id
-      
-      // 7. 处理剪贴板内容（在克隆面板上操作）
+      // 使用和copy()完全相同的处理逻辑
       processClipboardContent(primaryColor.value)
       
-      // 8. 恢复Mermaid SVG的原始样式（关键修复）
-      const processedSvgs = clonedPanel.querySelectorAll('svg')
-      processedSvgs.forEach((svg, index) => {
-        if (svgStyles[index]) {
-          // 用原始样式替换处理后的SVG
-          svg.outerHTML = svgStyles[index]
-        }
-      })
+      // 获取处理后的内容
+      let styledContent = clipboardDiv.innerHTML
       
-      // 9. 获取处理后的内容
-      let styledContent = clonedPanel.innerHTML
-      
-      // 10. 恢复原预览面板的id
-      originalPreviewPanel.id = originalId
-      clonedPanel.id = 'temp-output-for-processing'
-      
-      // 11. 特别保留代码块样式 - 确保代码块背景色不丢失
-      styledContent = styledContent
-        .replace(/<script[^>]*>.*?<\/script>/gi, '') // 移除脚本
-        .replace(/contenteditable="[^"]*"/gi, '') // 移除contenteditable属性
-      
-      // 12. 确保代码块有正确的样式（如果丢失了就手动添加）
-      styledContent = styledContent.replace(
-        /<code([^>]*)>/gi, 
-        (match, attributes) => {
-          // 如果code标签没有background-color样式，添加默认的黑色背景
-          if (!attributes.includes('background-color') && !attributes.includes('background:')) {
-            const style = attributes.includes('style=') 
-              ? attributes.replace(/style="([^"]*)"/, 'style="$1; background-color: #1e1e1e; color: #d4d4d4; padding: 2px 4px; border-radius: 3px;"')
-              : attributes + ' style="background-color: #1e1e1e; color: #d4d4d4; padding: 2px 4px; border-radius: 3px;"'
-            return `<code${style}>`
-          }
-          return match
-        }
-      )
-      
-      // 13. 同样处理pre代码块
-      styledContent = styledContent.replace(
-        /<pre([^>]*)>/gi,
-        (match, attributes) => {
-          if (!attributes.includes('background-color') && !attributes.includes('background:')) {
-            const style = attributes.includes('style=') 
-              ? attributes.replace(/style="([^"]*)"/, 'style="$1; background-color: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto;"')
-              : attributes + ' style="background-color: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto;"'
-            return `<pre${style}>`
-          }
-          return match
-        }
-      )
-      
-      // 14. 恢复深色模式（如果之前是深色）
+      // 恢复深色模式（如果之前是深色）
       if (isBeforeDark) {
         await nextTick()
         toggleDark()
@@ -335,8 +267,8 @@ async function getPreviewContent(): Promise<string> {
       return styledContent
       
     } finally {
-      // 15. 清理：移除临时克隆的面板
-      document.body.removeChild(clonedPanel)
+      // 恢复原始内容（重要：确保预览面板不被破坏）
+      clipboardDiv.innerHTML = originalContent
     }
     
   } catch (error) {
