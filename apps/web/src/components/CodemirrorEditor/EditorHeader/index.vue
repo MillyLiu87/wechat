@@ -47,10 +47,7 @@ const articleConfig = ref({
   title: '',
   author: '',
   digest: '',
-  contentSourceUrl: '',
-  showCoverPic: true,
-  needOpenComment: false,
-  onlyFansCanComment: false
+  showCoverPic: true
 })
 
 function onCoverChange(e: Event) {
@@ -475,11 +472,11 @@ async function actualSendToWeChat() {
           author: articleConfig.value.author,
           digest: articleConfig.value.digest,
           content: previewContent, // 使用预览面板的实际渲染内容
-          content_source_url: articleConfig.value.contentSourceUrl || '', // 原文链接，可选
+          content_source_url: '', // 不设置原文链接
           thumb_media_id: thumbMediaId, // 封面图的永久素材ID
           show_cover_pic: 1, // 是否显示封面，1-显示（封面图已上传）
-          need_open_comment: articleConfig.value.needOpenComment ? 1 : 0, // 是否打开评论，0-不打开，1-打开
-          only_fans_can_comment: articleConfig.value.onlyFansCanComment ? 1 : 0, // 是否粉丝才可评论，0-所有人可评论，1-粉丝才可评论
+          need_open_comment: 0, // 默认不打开评论
+          only_fans_can_comment: 0, // 默认所有人可评论
         },
       ],
     }
@@ -505,7 +502,7 @@ async function actualSendToWeChat() {
     }
 
     if (draftResp.data?.media_id) {
-      toast.success(`🎉 草稿创建成功！\nmedia_id: ${draftResp.data.media_id}\n请前往微信公众号后台查看`)
+      toast.success(`草稿创建成功！\n请前往微信公众号后台查看`)
     } else {
       console.warn('⚠️ 响应中没有media_id:', draftResp.data)
       toast.warning(`草稿可能创建成功，但响应异常。请检查公众号后台。`)
@@ -707,41 +704,7 @@ async function actualSendToWeChat() {
           ></textarea>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">原文链接 (可选)</label>
-          <input 
-            v-model="articleConfig.contentSourceUrl"
-            type="url" 
-            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            placeholder="请输入原文链接"
-            @click.stop
-          />
-        </div>
 
-        <div class="space-y-2">
-          <div class="flex items-center">
-            <input 
-              v-model="articleConfig.needOpenComment"
-              type="checkbox" 
-              id="needOpenComment"
-              class="mr-2"
-              @click.stop
-            />
-            <label for="needOpenComment" class="text-sm text-gray-700 dark:text-gray-300">开启评论</label>
-          </div>
-
-          <div class="flex items-center">
-            <input 
-              v-model="articleConfig.onlyFansCanComment"
-              type="checkbox" 
-              id="onlyFansCanComment"
-              class="mr-2"
-              :disabled="!articleConfig.needOpenComment"
-              @click.stop
-            />
-            <label for="onlyFansCanComment" class="text-sm text-gray-700 dark:text-gray-300">仅粉丝可评论</label>
-          </div>
-        </div>
       </div>
 
       <div class="flex justify-end space-x-3 mt-6">
