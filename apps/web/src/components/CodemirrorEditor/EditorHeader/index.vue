@@ -227,10 +227,10 @@ async function uploadPermanentImage(accessToken: string, file: File): Promise<st
   }
 }
 
-// ===== 获取预览面板内容的函数（使用与copy相同的方法） =====
+// ===== 获取预览面板内容的函数（确保背景样式被保留） =====
 async function getPreviewContent(): Promise<string> {
   try {
-    console.log('📄 开始获取预览内容（使用与copy按钮相同的处理方式）')
+    console.log('📄 开始获取预览内容（确保背景样式被保留）')
     
     const clipboardDiv = document.getElementById('output')
     if (!clipboardDiv) {
@@ -249,7 +249,77 @@ async function getPreviewContent(): Promise<string> {
         await nextTick()
       }
       
-      // 使用和copy()完全相同的处理逻辑
+      // 创建一个带有prose样式的临时容器来捕获完整样式
+      const tempDiv = document.createElement('div')
+      tempDiv.className = 'prose prose-sm max-w-none'
+      tempDiv.innerHTML = clipboardDiv.innerHTML
+      tempDiv.style.position = 'absolute'
+      tempDiv.style.left = '-9999px'
+      tempDiv.style.visibility = 'hidden'
+      document.body.appendChild(tempDiv)
+      
+      // 等待样式应用
+      await nextTick()
+      
+      // 递归内联背景和关键样式
+      function inlineBackgroundStyles(element: Element) {
+        const computed = window.getComputedStyle(element)
+        const existing = element.getAttribute('style') || ''
+        const styles: string[] = []
+        
+        // 重点处理背景相关样式
+        const backgroundColor = computed.backgroundColor
+        const background = computed.background
+        const backgroundImage = computed.backgroundImage
+        
+        if (backgroundColor && backgroundColor !== 'rgba(0, 0, 0, 0)' && backgroundColor !== 'transparent') {
+          styles.push(`background-color: ${backgroundColor}`)
+        }
+        
+        if (backgroundImage && backgroundImage !== 'none') {
+          styles.push(`background-image: ${backgroundImage}`)
+        }
+        
+        // 添加其他重要样式
+        const color = computed.color
+        if (color && color !== 'rgb(0, 0, 0)') {
+          styles.push(`color: ${color}`)
+        }
+        
+        const padding = computed.padding
+        if (padding && padding !== '0px') {
+          styles.push(`padding: ${padding}`)
+        }
+        
+        const margin = computed.margin
+        if (margin && margin !== '0px') {
+          styles.push(`margin: ${margin}`)
+        }
+        
+        const borderRadius = computed.borderRadius
+        if (borderRadius && borderRadius !== '0px') {
+          styles.push(`border-radius: ${borderRadius}`)
+        }
+        
+        if (styles.length > 0) {
+          const newStyle = existing ? `${existing}; ${styles.join('; ')}` : styles.join('; ')
+          element.setAttribute('style', newStyle)
+        }
+        
+        // 递归处理子元素
+        Array.from(element.children).forEach(child => inlineBackgroundStyles(child))
+      }
+      
+      // 应用内联样式
+      inlineBackgroundStyles(tempDiv)
+      
+      // 将处理后的内容复制回原容器
+      clipboardDiv.innerHTML = tempDiv.innerHTML
+      
+      // 清理临时容器
+      document.body.removeChild(tempDiv)
+      
+      // 使用和copy()相同的处理逻辑
       processClipboardContent(primaryColor.value)
       
       // 获取处理后的内容
